@@ -7,8 +7,11 @@ import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import { DEFAULT_DELIMITER, encode } from '../../../../packages/toon/src'
 import VPInput from './VPInput.vue'
 
+type JsonFormat = 'pretty-2' | 'pretty-4' | 'pretty-tab' | 'compact'
+
 interface PlaygroundState extends Required<Pick<EncodeOptions, 'delimiter' | 'indent' | 'keyFolding' | 'flattenDepth'>> {
   json: string
+  jsonFormat: JsonFormat
 }
 
 const PRESETS = {
@@ -70,20 +73,37 @@ const DELIMITER_OPTIONS: { value: Delimiter, label: string }[] = [
   { value: '\t', label: 'Tab (\\t)' },
   { value: '|', label: 'Pipe (|)' },
 ]
+const JSON_FORMAT_OPTIONS: { value: JsonFormat, label: string, indent: string | number | undefined }[] = [
+  { value: 'pretty-2', label: 'Pretty (2 spaces)', indent: 2 },
+  { value: 'pretty-4', label: 'Pretty (4 spaces)', indent: 4 },
+  { value: 'pretty-tab', label: 'Pretty (tabs)', indent: '\t' },
+  { value: 'compact', label: 'Compact', indent: undefined },
+]
 const DEFAULT_JSON = JSON.stringify(PRESETS.hikes, undefined, 2)
 const SHARE_URL_LIMIT = 8 * 1024
 
+// Input state
 const jsonInput = ref(DEFAULT_JSON)
+const jsonFormat = ref<JsonFormat>('pretty-2')
+const currentFormatIndent = computed(() =>
+  JSON_FORMAT_OPTIONS.find(opt => opt.value === jsonFormat.value)?.indent,
+)
+const formattedJson = computed(() => {
+  try {
+    return formatJson(JSON.parse(jsonInput.value))
+  }
+  catch {
+    return jsonInput.value
+  }
+})
+
+// Encoder options
 const delimiter = ref<Delimiter>(DEFAULT_DELIMITER)
 const indent = ref(2)
 const keyFolding = ref<'off' | 'safe'>('safe')
 const flattenDepth = ref(2)
 
-const canShareState = ref(true)
-const hasCopiedUrl = ref(false)
-
-const tokenizer = shallowRef<typeof import('gpt-tokenizer') | undefined>()
-
+// Encoding output
 const encodingResult = computed(() => {
   try {
     const parsedInput = JSON.parse(jsonInput.value)
@@ -104,12 +124,13 @@ const encodingResult = computed(() => {
     }
   }
 })
-
 const toonOutput = computed(() => encodingResult.value.output)
 const error = computed(() => encodingResult.value.error)
 
+// Token analysis
+const tokenizer = shallowRef<typeof import('gpt-tokenizer') | undefined>()
 const jsonTokens = computed(() =>
-  tokenizer.value?.encode(jsonInput.value).length,
+  tokenizer.value?.encode(formattedJson.value).length,
 )
 const toonTokens = computed(() =>
   tokenizer.value && toonOutput.value ? tokenizer.value.encode(toonOutput.value).length : undefined,
@@ -125,17 +146,11 @@ const tokenSavings = computed(() => {
   return { diff, percent, sign, isSavings: diff > 0 }
 })
 
+// UI state
+const canShareState = ref(true)
+const hasCopiedUrl = ref(false)
+
 const { copy, copied } = useClipboard({ source: toonOutput })
-
-async function copyShareUrl() {
-  if (!canShareState.value)
-    return
-
-  await navigator.clipboard.writeText(window.location.href)
-  hasCopiedUrl.value = true
-  setTimeout(() => (hasCopiedUrl.value = false), 2000)
-}
-
 const updateUrl = useDebounceFn(() => {
   const hash = encodeState()
   const baseUrl = `${window.location.origin}${window.location.pathname}${window.location.search}`
@@ -150,8 +165,15 @@ const updateUrl = useDebounceFn(() => {
   window.history.replaceState(null, '', `#${hash}`)
 }, 300)
 
-watch([jsonInput, delimiter, indent, keyFolding, flattenDepth], () => {
+watch([jsonInput, delimiter, indent, keyFolding, flattenDepth, jsonFormat], () => {
   updateUrl()
+})
+
+watch(jsonFormat, () => {
+  try {
+    jsonInput.value = formatJson(JSON.parse(jsonInput.value))
+  }
+  catch {}
 })
 
 onMounted(() => {
@@ -168,8 +190,13 @@ onMounted(() => {
     indent.value = state.indent
     keyFolding.value = state.keyFolding ?? 'safe'
     flattenDepth.value = state.flattenDepth ?? 2
+    jsonFormat.value = state.jsonFormat ?? 'pretty-2'
   }
 })
+
+function formatJson(value: unknown) {
+  return JSON.stringify(value, undefined, currentFormatIndent.value)
+}
 
 function encodeState() {
   const state: PlaygroundState = {
@@ -178,6 +205,7 @@ function encodeState() {
     indent: indent.value,
     keyFolding: keyFolding.value,
     flattenDepth: flattenDepth.value,
+    jsonFormat: jsonFormat.value,
   }
 
   const compressedData = zlibSync(stringToUint8Array(JSON.stringify(state)))
@@ -196,7 +224,16 @@ function decodeState(hash: string) {
 }
 
 function loadPreset(name: keyof typeof PRESETS) {
-  jsonInput.value = JSON.stringify(PRESETS[name], undefined, 2)
+  jsonInput.value = formatJson(PRESETS[name])
+}
+
+async function copyShareUrl() {
+  if (!canShareState.value)
+    return
+
+  await navigator.clipboard.writeText(window.location.href)
+  hasCopiedUrl.value = true
+  setTimeout(() => (hasCopiedUrl.value = false), 2000)
 }
 
 async function loadTokenizer() {
@@ -258,7 +295,7 @@ async function loadTokenizer() {
         <VPInput id="preset" label="Preset">
           <select id="preset" @change="(e) => loadPreset((e.target as HTMLSelectElement).value as keyof typeof PRESETS)">
             <option value="" disabled selected>
-              Load example...
+              Load example…
             </option>
             <option value="hikes">
               Hikes (mixed structure)
@@ -271,6 +308,14 @@ async function loadTokenizer() {
             </option>
             <option value="events">
               Events (semi-uniform)
+            </option>
+          </select>
+        </VPInput>
+
+        <VPInput id="jsonFormat" label="JSON Baseline">
+          <select id="jsonFormat" v-model="jsonFormat">
+            <option v-for="opt in JSON_FORMAT_OPTIONS" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
             </option>
           </select>
         </VPInput>
@@ -307,8 +352,8 @@ async function loadTokenizer() {
           <div class="pane-header">
             <span class="pane-title">JSON Input</span>
             <span class="pane-stats">
-              <span>{{ jsonTokens ?? '...' }} tokens</span>
-              <span>{{ jsonInput.length }} chars</span>
+              <span class="stat-primary" title="Token count using selected JSON baseline format">{{ jsonTokens ?? '…' }} tokens</span>
+              <span class="stat-secondary">{{ formattedJson.length }} chars</span>
             </span>
           </div>
           <textarea
@@ -319,7 +364,7 @@ async function loadTokenizer() {
             aria-label="JSON input"
             :aria-describedby="error ? 'json-error' : undefined"
             :aria-invalid="!!error"
-            placeholder="Enter JSON here..."
+            placeholder="Enter JSON here…"
           />
         </div>
 
@@ -333,8 +378,8 @@ async function loadTokenizer() {
               </span>
             </span>
             <span class="pane-stats">
-              <span>{{ toonTokens ?? '...' }} tokens</span>
-              <span>{{ toonOutput.length }} chars</span>
+              <span class="stat-primary">{{ toonTokens ?? '…' }} tokens</span>
+              <span class="stat-secondary">{{ toonOutput.length }} chars</span>
             </span>
           </div>
           <div class="editor-output">
@@ -539,6 +584,15 @@ async function loadTokenizer() {
   color: var(--vp-c-text-2);
   text-transform: none;
   letter-spacing: normal;
+}
+
+.stat-primary {
+  font-weight: 600;
+  color: var(--vp-c-text-1);
+}
+
+.stat-secondary {
+  color: var(--vp-c-text-3);
 }
 
 .savings-badge {
