@@ -297,3 +297,154 @@ class TestComplexStructures:
         assert result == {
             "root": {"level1": {"level2": {"level3": "value", "items": ["a", "b"]}}}
         }
+
+
+class TestBlockScalars:
+    """Test YAML-style block scalar support (|, >, etc.)."""
+
+    def test_literal_block_scalar_basic(self):
+        """Test basic literal block scalar with |."""
+        toon = """content: |
+  Line 1
+  Line 2
+  Line 3"""
+        result = decode(toon)
+        assert result == {"content": "Line 1\nLine 2\nLine 3\n"}
+
+    def test_literal_block_scalar_preserves_blank_lines(self):
+        """Test that literal block scalar preserves blank lines."""
+        toon = """content: |
+  Line 1
+
+  Line 2 after blank
+
+  Line 3"""
+        result = decode(toon)
+        assert result == {"content": "Line 1\n\nLine 2 after blank\n\nLine 3\n"}
+
+    def test_literal_strip_chomping(self):
+        """Test |- removes trailing newline."""
+        toon = """content: |-
+  Line 1
+  Line 2"""
+        result = decode(toon)
+        assert result == {"content": "Line 1\nLine 2"}
+
+    def test_literal_keep_chomping(self):
+        """Test |+ preserves all trailing newlines."""
+        toon = """content: |+
+  Line 1
+  Line 2
+
+"""
+        result = decode(toon)
+        # |+ preserves trailing blank lines as newlines
+        assert result == {"content": "Line 1\nLine 2\n\n\n"}
+
+    def test_folded_block_scalar_basic(self):
+        """Test folded block scalar with >."""
+        toon = """content: >
+  This is a long
+  paragraph that
+  should be folded"""
+        result = decode(toon)
+        assert result == {"content": "This is a long paragraph that should be folded\n"}
+
+    def test_folded_block_scalar_preserves_paragraph_breaks(self):
+        """Test that folded block scalar preserves blank line paragraph breaks."""
+        toon = """content: >
+  Paragraph one
+  continues here.
+
+  Paragraph two
+  continues here."""
+        result = decode(toon)
+        assert result == {"content": "Paragraph one continues here.\n\nParagraph two continues here.\n"}
+
+    def test_folded_strip_chomping(self):
+        """Test >- removes trailing newline."""
+        toon = """content: >-
+  This is folded
+  content"""
+        result = decode(toon)
+        assert result == {"content": "This is folded content"}
+
+    def test_block_scalar_nested_in_object(self):
+        """Test block scalar in nested object structure."""
+        toon = """tool: write_file
+input:
+  path: /test/file.md
+  content: |
+    # Heading
+
+    Paragraph text
+
+    ## Subheading"""
+        result = decode(toon)
+        assert result == {
+            "tool": "write_file",
+            "input": {
+                "path": "/test/file.md",
+                "content": "# Heading\n\nParagraph text\n\n## Subheading\n"
+            }
+        }
+
+    def test_block_scalar_with_indented_content(self):
+        """Test block scalar preserves internal indentation."""
+        toon = """code: |
+  def hello():
+      print("Hello")
+      return True"""
+        result = decode(toon)
+        assert result == {"code": "def hello():\n    print(\"Hello\")\n    return True\n"}
+
+    def test_block_scalar_with_markdown_list(self):
+        """Test block scalar with markdown list content."""
+        toon = """readme: |
+  # Title
+
+  Features:
+  - Item 1
+  - Item 2
+  - Item 3"""
+        result = decode(toon)
+        assert result == {"readme": "# Title\n\nFeatures:\n- Item 1\n- Item 2\n- Item 3\n"}
+
+    def test_multiple_block_scalars(self):
+        """Test multiple block scalars in same object."""
+        toon = """files:
+  readme: |
+    # README
+    Content here
+  license: |
+    MIT License
+    Copyright"""
+        result = decode(toon)
+        assert result == {
+            "files": {
+                "readme": "# README\nContent here\n",
+                "license": "MIT License\nCopyright\n"
+            }
+        }
+
+    def test_block_scalar_followed_by_sibling_key(self):
+        """Test block scalar properly terminates when sibling key encountered."""
+        toon = """config:
+  script: |
+    echo "hello"
+    echo "world"
+  timeout: 30"""
+        result = decode(toon)
+        assert result == {
+            "config": {
+                "script": "echo \"hello\"\necho \"world\"\n",
+                "timeout": 30
+            }
+        }
+
+    def test_empty_block_scalar(self):
+        """Test block scalar with no content lines."""
+        toon = """content: |
+next_key: value"""
+        result = decode(toon)
+        assert result == {"content": "", "next_key": "value"}
