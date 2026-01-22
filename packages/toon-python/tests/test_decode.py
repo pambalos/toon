@@ -448,3 +448,82 @@ input:
 next_key: value"""
         result = decode(toon)
         assert result == {"content": "", "next_key": "value"}
+
+
+class TestImplicitMultiline:
+    """Test implicit multi-line content detection (LLM-friendly mode)."""
+
+    def test_implicit_multiline_markdown(self):
+        """Test that markdown content after inline value is captured."""
+        toon = """content: # Heading
+
+## Overview
+Some paragraph text.
+
+- List item 1
+- List item 2"""
+        result = decode(toon)
+        expected = "# Heading\n\n## Overview\nSome paragraph text.\n\n- List item 1\n- List item 2"
+        assert result["content"] == expected
+
+    def test_implicit_multiline_stops_at_sibling_key(self):
+        """Test that implicit multiline stops at sibling TOON key."""
+        toon = """input:
+  content: # Heading
+
+## Section
+Paragraph here.
+  mode: overwrite"""
+        result = decode(toon)
+        assert result["input"]["content"] == "# Heading\n\n## Section\nParagraph here."
+        assert result["input"]["mode"] == "overwrite"
+
+    def test_implicit_multiline_full_tool_call(self):
+        """Test realistic LLM tool call with implicit multiline."""
+        toon = """tool: write_file
+input:
+  path: /test/file.md
+  content: # Product Roadmap
+
+## Overview
+Dashboard for agent management.
+
+## Features
+- Feature 1
+- Feature 2"""
+        result = decode(toon)
+        assert result["tool"] == "write_file"
+        assert result["input"]["path"] == "/test/file.md"
+        assert "# Product Roadmap" in result["input"]["content"]
+        assert "## Overview" in result["input"]["content"]
+        assert "- Feature 1" in result["input"]["content"]
+
+    def test_toon_list_not_affected(self):
+        """Test that proper TOON lists are NOT affected by implicit multiline."""
+        toon = """items[2]:
+  - a:
+      b: 1
+  - a:
+      b: 2"""
+        result = decode(toon)
+        assert result == {"items": [{"a": {"b": 1}}, {"a": {"b": 2}}]}
+
+    def test_simple_inline_not_affected(self):
+        """Test that simple inline values don't trigger implicit multiline."""
+        toon = """name: Alice
+age: 30
+active: true"""
+        result = decode(toon)
+        assert result == {"name": "Alice", "age": 30, "active": True}
+
+    def test_implicit_multiline_with_colons_in_content(self):
+        """Test content with colons (like URLs) doesn't break parsing."""
+        toon = """content: # Links
+
+Check out https://example.com for more info.
+
+See also: related docs
+next: value"""
+        result = decode(toon)
+        assert "https://example.com" in result["content"]
+        assert result["next"] == "value"

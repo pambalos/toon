@@ -270,8 +270,14 @@ def _decode_key_value(
         if value_part in ("|", ">", "|-", ">-", "|+", ">+"):
             value = _decode_block_scalar(cursor, depth, value_part)
         else:
-            # Inline value
-            value = parse_primitive(value_part)
+            # Inline value - but check for implicit multi-line continuation
+            # If following lines don't look like valid TOON, treat as multi-line content
+            continuation = _collect_implicit_multiline(cursor, depth)
+            if continuation:
+                # Combine first line with continuation
+                value = value_part + "\n" + continuation
+            else:
+                value = parse_primitive(value_part)
     else:
         # Check for nested content
         next_line = cursor.peek()
@@ -283,6 +289,117 @@ def _decode_key_value(
             value = {}
 
     return key, value
+
+
+def _collect_implicit_multiline(cursor: _Cursor, parent_depth: int) -> str | None:
+    """
+    Collect implicit multi-line content when LLM doesn't use | indicator.
+
+    After an inline value like `content: # Heading`, check if subsequent lines
+    are "orphaned" (not valid TOON key:value pairs). If so, collect them as
+    multi-line continuation.
+
+    Only activates when the first non-blank following line is clearly NOT
+    valid TOON structure (e.g., markdown heading, plain text paragraph).
+
+    Args:
+        cursor: The line cursor (positioned after the inline value line).
+        parent_depth: The depth of the key that had the inline value.
+
+    Returns:
+        The collected multi-line content, or None if no continuation found.
+    """
+    start_pos = cursor.pos
+
+    # First, peek at the first non-blank line to decide if we should even
+    # enter implicit multiline mode. If it looks like valid TOON, bail out.
+    peek_pos = cursor.pos
+    first_content_line = None
+    while peek_pos < len(cursor.lines):
+        line = cursor.lines[peek_pos]
+        if line.content:  # Non-blank
+            first_content_line = line
+            break
+        peek_pos += 1
+
+    if first_content_line is None:
+        # No more content - nothing to collect
+        return None
+
+    # Check if first content line looks like valid TOON structure
+    content = first_content_line.content
+
+    # If it starts with - followed by space or has key:, it's likely TOON
+    if content.startswith("- ") or content == "-":
+        return None  # TOON list item
+
+    if content.startswith("[") and "]" in content:
+        return None  # Array header
+
+    colon_pos = find_unquoted_colon(content)
+    if colon_pos > 0:
+        key_part = content[:colon_pos].strip()
+        # Check if it looks like a valid TOON key (identifier-like)
+        # Valid bare keys: start with letter/underscore, no spaces
+        # Quoted keys: start with "
+        if key_part:
+            if key_part.startswith('"'):
+                # Quoted key - valid TOON
+                if not key_part.startswith("#"):
+                    return None
+            elif (key_part[0].isalpha() or key_part[0] == '_') and " " not in key_part:
+                # Bare key without spaces - valid TOON (unless markdown heading)
+                if not key_part.startswith("#"):
+                    return None
+
+    # OK, first line doesn't look like TOON - enter implicit multiline mode
+    lines: list[str] = []
+
+    while cursor.pos < len(cursor.lines):
+        line = cursor.lines[cursor.pos]
+        content = line.content
+
+        # Empty/blank line - include in multi-line content
+        if not content:
+            cursor.pos += 1
+            lines.append("")
+            continue
+
+        # Stop on lines that look like ACTUAL TOON sibling/parent keys
+        if line.depth <= parent_depth:
+            colon_pos = find_unquoted_colon(content)
+
+            if colon_pos > 0:
+                key_part = content[:colon_pos].strip()
+                # Valid TOON key: starts with letter/underscore (no spaces), or quoted
+                # But NOT markdown headings like "## Section:"
+                if key_part and not key_part.startswith("#"):
+                    if key_part.startswith('"'):
+                        break  # Quoted key
+                    elif (key_part[0].isalpha() or key_part[0] == '_') and " " not in key_part:
+                        break  # Valid bare key
+
+            if content.startswith("[") and "]:" in content:
+                break
+
+        # This line is content continuation
+        cursor.pos += 1
+        lines.append(line.raw.rstrip("\r\n"))
+
+    # If we didn't collect anything meaningful, restore position
+    if not lines or all(not l for l in lines):
+        cursor.pos = start_pos
+        return None
+
+    # Strip trailing empty lines
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    if not lines:
+        cursor.pos = start_pos
+        return None
+
+    return "\n".join(lines)
 
 
 def _decode_block_scalar(cursor: _Cursor, depth: int, indicator: str) -> str:
