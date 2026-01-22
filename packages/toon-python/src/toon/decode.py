@@ -266,8 +266,12 @@ def _decode_key_value(
     key = _parse_key(key_part, cursor.mark_quoted)
 
     if value_part:
-        # Inline value
-        value = parse_primitive(value_part)
+        # Check for YAML-style block scalar indicators
+        if value_part in ("|", ">", "|-", ">-", "|+", ">+"):
+            value = _decode_block_scalar(cursor, depth, value_part)
+        else:
+            # Inline value
+            value = parse_primitive(value_part)
     else:
         # Check for nested content
         next_line = cursor.peek()
@@ -279,6 +283,120 @@ def _decode_key_value(
             value = {}
 
     return key, value
+
+
+def _decode_block_scalar(cursor: _Cursor, depth: int, indicator: str) -> str:
+    """
+    Decode a YAML-style block scalar (literal | or folded >).
+
+    Supports:
+    - | (literal): preserves newlines
+    - > (folded): folds newlines into spaces
+    - |- or >- (strip): removes trailing newlines
+    - |+ or >+ (keep): preserves trailing newlines
+
+    Args:
+        cursor: The line cursor.
+        depth: The current indentation depth.
+        indicator: The block scalar indicator (|, >, |-, >-, |+, >+).
+
+    Returns:
+        The decoded multi-line string.
+    """
+    content_lines: list[str] = []
+    block_indent: int | None = None
+
+    # Determine the style
+    is_literal = indicator.startswith("|")  # | preserves newlines, > folds them
+    chomping = "clip"  # default: single trailing newline
+    if indicator.endswith("-"):
+        chomping = "strip"  # no trailing newline
+    elif indicator.endswith("+"):
+        chomping = "keep"  # preserve all trailing newlines
+
+    # Calculate minimum required indent (must be greater than parent depth)
+    min_indent = (depth + 1) * cursor.options.indent
+
+    # Access lines directly to not skip blank lines (cursor.peek() skips them)
+    while cursor.pos < len(cursor.lines):
+        line = cursor.lines[cursor.pos]
+        raw = line.raw
+        stripped = raw.lstrip(" ")
+        current_indent = len(raw) - len(stripped)
+        is_blank = not stripped.strip()
+
+        # First non-blank line establishes the block indent
+        if block_indent is None:
+            if is_blank:
+                # Blank line before content - preserve it
+                cursor.pos += 1
+                content_lines.append("")
+                continue
+
+            # First non-blank line must be indented more than parent
+            if current_indent < min_indent:
+                break
+
+            block_indent = current_indent
+
+        # Check if this line is still part of the block
+        if is_blank:
+            # Blank lines are always included (may be trimmed later by chomping)
+            cursor.pos += 1
+            content_lines.append("")
+            continue
+
+        # Non-blank line: check indent
+        if current_indent < block_indent:
+            # Less indented non-blank line ends the block
+            break
+
+        cursor.pos += 1
+
+        # Remove the block indent from the line content
+        content = raw[block_indent:].rstrip("\r\n")
+        content_lines.append(content)
+
+    # Handle trailing empty lines based on chomping indicator
+    if chomping == "strip":
+        # Remove all trailing empty lines
+        while content_lines and not content_lines[-1]:
+            content_lines.pop()
+    elif chomping == "clip":
+        # Keep at most one trailing newline (handled by join)
+        while len(content_lines) > 1 and not content_lines[-1]:
+            content_lines.pop()
+    # "keep" preserves all trailing empty lines as-is
+
+    # Join lines based on style
+    if is_literal:
+        # Literal style: preserve newlines exactly
+        result = "\n".join(content_lines)
+    else:
+        # Folded style: fold single newlines into spaces, preserve double+ newlines
+        result_parts = []
+        current_paragraph: list[str] = []
+
+        for line in content_lines:
+            if not line:
+                # Empty line = paragraph break
+                if current_paragraph:
+                    result_parts.append(" ".join(current_paragraph))
+                    current_paragraph = []
+                result_parts.append("")
+            else:
+                current_paragraph.append(line)
+
+        if current_paragraph:
+            result_parts.append(" ".join(current_paragraph))
+
+        result = "\n".join(result_parts)
+
+    # Add trailing newline for clip/keep modes if there's content
+    if result and chomping in ("clip", "keep"):
+        result += "\n"
+
+    return result
 
 
 def _decode_list_items(
