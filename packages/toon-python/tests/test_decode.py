@@ -527,3 +527,42 @@ next: value"""
         result = decode(toon)
         assert "https://example.com" in result["content"]
         assert result["next"] == "value"
+
+
+class TestSingleQuotedStrings:
+    """Test single-quoted string support."""
+
+    def test_single_quoted_string(self):
+        """Basic single-quoted string."""
+        assert decode("value: 'hello'") == {"value": "hello"}
+
+    def test_single_quoted_empty(self):
+        """Empty single-quoted string."""
+        assert decode("value: ''") == {"value": ""}
+
+    def test_single_quoted_with_spaces(self):
+        """Single-quoted string with spaces."""
+        assert decode("value: 'hello world'") == {"value": "hello world"}
+
+    def test_single_quoted_json(self):
+        """Single-quoted JSON string (the problem case)."""
+        result = decode('value: \'{"key": "val"}\'')
+        assert result == {"value": '{"key": "val"}'}
+
+    def test_single_quoted_with_double_quotes(self):
+        """Single-quoted string containing double quotes."""
+        assert decode('value: \'he said "hi"\'') == {"value": 'he said "hi"'}
+
+    def test_single_quoted_escaped_single(self):
+        """Escaped single quote inside single-quoted string."""
+        assert decode("value: 'it\\'s fine'") == {"value": "it's fine"}
+
+    def test_nested_input_single_quoted(self):
+        """Nested object with single-quoted value."""
+        result = decode("""tool: test
+input:
+  data: '{"nested": true}'""")
+        assert result == {
+            "tool": "test",
+            "input": {"data": '{"nested": true}'}
+        }

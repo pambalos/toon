@@ -113,7 +113,7 @@ def parse_primitive(token: str) -> "JsonPrimitive":
         return ""
 
     # Quoted string
-    if token.startswith('"'):
+    if token.startswith('"') or token.startswith("'"):
         return parse_string_literal(token)
 
     # Literals
@@ -135,10 +135,10 @@ def parse_primitive(token: str) -> "JsonPrimitive":
 
 def parse_string_literal(token: str) -> str:
     """
-    Parse a quoted string literal.
+    Parse a quoted string literal (double or single quotes).
 
     Args:
-        token: The token starting with '"'.
+        token: The token starting with '"' or "'".
 
     Returns:
         The unescaped string content.
@@ -146,26 +146,31 @@ def parse_string_literal(token: str) -> str:
     Raises:
         SyntaxError: If the string is malformed.
     """
-    if not token.startswith('"'):
+    if len(token) < 2:
+        raise SyntaxError(f"String literal too short: {token}")
+
+    quote_char = token[0]
+    if quote_char not in ('"', "'"):
         raise SyntaxError(f"String literal must start with quote: {token}")
 
     # Find the closing quote
-    end = find_closing_quote(token, 0)
+    end = find_closing_quote(token, 0, quote_char)
     if end == -1:
         raise SyntaxError(f"Unterminated string: {token}")
 
     # Extract content between quotes
     content = token[1:end]
-    return unescape_string(content)
+    return unescape_string(content, quote_char)
 
 
-def find_closing_quote(s: str, start: int) -> int:
+def find_closing_quote(s: str, start: int, quote_char: str = '"') -> int:
     """
     Find the closing quote in a string.
 
     Args:
         s: The string to search.
         start: The position of the opening quote.
+        quote_char: The quote character to match ('"' or "'").
 
     Returns:
         Index of the closing quote, or -1 if not found.
@@ -177,7 +182,7 @@ def find_closing_quote(s: str, start: int) -> int:
             # Skip escape sequence
             i += 2
             continue
-        elif char == '"':
+        elif char == quote_char:
             return i
         i += 1
     return -1

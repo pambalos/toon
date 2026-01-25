@@ -1,6 +1,6 @@
 [project]
 name = "toon-format"
-version = "1.0.0"
+version = "1.1.0"
 description = "TOON (Token-Oriented Object Notation) - A token-efficient JSON alternative optimized for LLM tool calls"
 readme = "README.md"
 requires-python = ">=3.9"

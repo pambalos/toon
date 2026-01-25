@@ -6,10 +6,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .types import Delimiter
 
-# TOON only allows these 5 escape sequences
+# TOON only allows these escape sequences
 ESCAPE_MAP = {
     "\\": "\\\\",
     '"': '\\"',
+    "'": "\\'",
     "\n": "\\n",
     "\r": "\\r",
     "\t": "\\t",
@@ -18,6 +19,7 @@ ESCAPE_MAP = {
 UNESCAPE_MAP = {
     "\\": "\\",
     '"': '"',
+    "'": "'",
     "n": "\n",
     "r": "\r",
     "t": "\t",
@@ -59,19 +61,21 @@ def escape_string(value: str) -> str:
     return "".join(result)
 
 
-def unescape_string(value: str) -> str:
+def unescape_string(value: str, quote_char: str = '"') -> str:
     """
     Unescape a TOON string that was inside quotes.
 
-    Processes the 5 valid escape sequences:
+    Processes the valid escape sequences:
     - \\\\ → backslash
     - \\" → double quote
+    - \\' → single quote
     - \\n → newline
     - \\r → carriage return
     - \\t → tab
 
     Args:
         value: The string content (without surrounding quotes).
+        quote_char: The quote character used (for escape handling).
 
     Returns:
         The unescaped string.
@@ -139,7 +143,7 @@ def is_safe_unquoted(value: str, delimiter: "Delimiter" = ",") -> bool:
         return False
 
     # Check for quotes and backslashes
-    if '"' in value or "\\" in value:
+    if '"' in value or "'" in value or "\\" in value:
         return False
 
     # Check for control characters

@@ -21,7 +21,7 @@ Usage:
     decoded = toon.decode(text, DecodeOptions(strict=True, expand_paths=True))
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 from .decode import decode, decode_lines, decode_stream_async
 from .encode import encode, encode_lines
