@@ -3,9 +3,16 @@
 from collections.abc import Generator
 from typing import Any
 
+import re
+
 from .primitives import encode_key, encode_primitive, format_array_header
 from .string_utils import is_valid_identifier_segment
 from .types import Delimiter, EncodeOptions, JsonValue
+
+# Pattern for lines that look like TOON key:value pairs
+_TOON_KEY_VALUE_PATTERN = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*\s*:')
+# Pattern for TypeScript/code-like type annotations (name: Type)
+_TYPE_ANNOTATION_PATTERN = re.compile(r'^\s*[a-zA-Z_][a-zA-Z0-9_]*\s*:\s*[a-zA-Z"\'\[\{]')
 
 
 def encode(value: Any, options: EncodeOptions | None = None) -> str:
@@ -106,9 +113,14 @@ def _encode_object_lines(
         elif isinstance(normalized, list):
             yield from _encode_array(key, normalized, opts, depth)
         else:
-            # Primitive value
-            encoded_value = encode_primitive(normalized, opts.delimiter)
-            yield f"{indent}{encoded_key}: {encoded_value}"
+            # Primitive value - check if heredoc is needed for multi-line strings
+            if isinstance(normalized, str) and _needs_heredoc(normalized):
+                yield f"{indent}{encoded_key}: <<CONTENT"
+                yield from normalized.split('\n')
+                yield "CONTENT"
+            else:
+                encoded_value = encode_primitive(normalized, opts.delimiter)
+                yield f"{indent}{encoded_key}: {encoded_value}"
 
 
 def _encode_array(
@@ -465,6 +477,64 @@ def _is_tabular_array(arr: list) -> bool:
 def _is_primitive(value: JsonValue) -> bool:
     """Check if value is a primitive (not dict or list)."""
     return not isinstance(value, (dict, list))
+
+
+def _needs_heredoc(value: str) -> bool:
+    """
+    Check if a string value needs heredoc encoding.
+
+    Returns True if the value:
+    - Is multi-line AND
+    - Contains lines that look like TOON key:value pairs or code type annotations
+
+    This prevents parsing ambiguity where code like "name: string" would be
+    incorrectly parsed as a TOON key-value pair.
+
+    Args:
+        value: The string value to check.
+
+    Returns:
+        True if heredoc encoding should be used.
+    """
+    if not isinstance(value, str):
+        return False
+
+    if '\n' not in value:
+        return False
+
+    lines = value.split('\n')
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # Check if line looks like a TOON key:value pair
+        if _TOON_KEY_VALUE_PATTERN.match(stripped):
+            return True
+
+        # Check for type annotation patterns (TypeScript, etc.)
+        if _TYPE_ANNOTATION_PATTERN.match(line):
+            return True
+
+    return False
+
+
+def _encode_heredoc(value: str, indent: str, tag: str = "CONTENT") -> list[str]:
+    """
+    Encode a string value using heredoc syntax.
+
+    Args:
+        value: The string value to encode.
+        indent: The current indentation string.
+        tag: The heredoc tag to use (default: CONTENT).
+
+    Returns:
+        List of lines for the heredoc.
+    """
+    lines = [f"<<{tag}"]
+    lines.extend(value.split('\n'))
+    lines.append(tag)
+    return lines
 
 
 def _normalize_value(value: Any) -> JsonValue:

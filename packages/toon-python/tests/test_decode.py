@@ -566,3 +566,189 @@ input:
             "tool": "test",
             "input": {"data": '{"nested": true}'}
         }
+
+
+class TestHeredoc:
+    """Test heredoc syntax support (<<TAG ... TAG)."""
+
+    def test_basic_heredoc(self):
+        """Test basic heredoc syntax."""
+        toon = """content: <<END
+line 1
+line 2
+line 3
+END"""
+        result = decode(toon)
+        assert result == {"content": "line 1\nline 2\nline 3"}
+
+    def test_heredoc_with_content_tag(self):
+        """Test heredoc with CONTENT tag."""
+        toon = """data: <<CONTENT
+hello world
+CONTENT"""
+        result = decode(toon)
+        assert result == {"data": "hello world"}
+
+    def test_heredoc_with_eof_tag(self):
+        """Test heredoc with EOF tag."""
+        toon = """text: <<EOF
+some text
+EOF"""
+        result = decode(toon)
+        assert result == {"text": "some text"}
+
+    def test_heredoc_typescript_interface(self):
+        """Test heredoc with TypeScript interface - the main use case."""
+        toon = """tool: write_file
+input:
+  path: /path/to/file.tsx
+  content: <<CONTENT
+interface FileNode {
+  name: string
+  path: string
+  type: "file"
+}
+CONTENT"""
+        result = decode(toon)
+        assert result == {
+            "tool": "write_file",
+            "input": {
+                "path": "/path/to/file.tsx",
+                "content": 'interface FileNode {\n  name: string\n  path: string\n  type: "file"\n}'
+            }
+        }
+
+    def test_heredoc_with_colons(self):
+        """Test heredoc preserves lines that look like key:value."""
+        toon = """content: <<END
+name: string
+path: string
+type: "file"
+END"""
+        result = decode(toon)
+        assert result == {"content": 'name: string\npath: string\ntype: "file"'}
+
+    def test_heredoc_preserves_indentation(self):
+        """Test heredoc preserves internal indentation."""
+        toon = """code: <<CODE
+def hello():
+    print("Hello")
+    if True:
+        return 1
+CODE"""
+        result = decode(toon)
+        assert result == {"code": 'def hello():\n    print("Hello")\n    if True:\n        return 1'}
+
+    def test_heredoc_with_blank_lines(self):
+        """Test heredoc preserves blank lines."""
+        toon = """content: <<END
+line 1
+
+line 3
+END"""
+        result = decode(toon)
+        assert result == {"content": "line 1\n\nline 3"}
+
+    def test_heredoc_followed_by_sibling_key(self):
+        """Test heredoc properly terminates and sibling key is parsed."""
+        toon = """input:
+  content: <<CONTENT
+interface Props {
+  name: string
+}
+CONTENT
+  mode: overwrite"""
+        result = decode(toon)
+        assert result == {
+            "input": {
+                "content": "interface Props {\n  name: string\n}",
+                "mode": "overwrite"
+            }
+        }
+
+    def test_heredoc_empty_content(self):
+        """Test heredoc with no content between tags."""
+        toon = """content: <<END
+END"""
+        result = decode(toon)
+        assert result == {"content": ""}
+
+    def test_heredoc_with_tag_in_content(self):
+        """Test that tag inside content doesn't close heredoc (only stripped line match)."""
+        toon = """content: <<END
+The END is near
+But not END yet
+END"""
+        result = decode(toon)
+        assert result == {"content": "The END is near\nBut not END yet"}
+
+    def test_heredoc_nested_code_blocks(self):
+        """Test heredoc with markdown code blocks inside."""
+        toon = """readme: <<CONTENT
+# README
+
+```typescript
+interface Config {
+  port: number
+}
+```
+
+## Usage
+CONTENT"""
+        result = decode(toon)
+        expected = """# README
+
+```typescript
+interface Config {
+  port: number
+}
+```
+
+## Usage"""
+        assert result == {"readme": expected}
+
+    def test_heredoc_missing_tag_raises_error(self):
+        """Test that heredoc without tag raises SyntaxError."""
+        with pytest.raises(SyntaxError, match="Heredoc requires a tag"):
+            decode("content: <<")
+
+    def test_heredoc_realistic_write_file(self):
+        """Test realistic write_file tool call with TypeScript."""
+        toon = """tool: write_file
+input:
+  path: src/types/user.ts
+  content: <<CONTENT
+export interface User {
+  id: string
+  name: string
+  email: string
+  role: "admin" | "user"
+  createdAt: Date
+}
+
+export interface UserProfile extends User {
+  avatar: string
+  bio: string
+}
+CONTENT"""
+        result = decode(toon)
+        assert result["tool"] == "write_file"
+        assert result["input"]["path"] == "src/types/user.ts"
+        assert "export interface User {" in result["input"]["content"]
+        assert "id: string" in result["input"]["content"]
+        assert "export interface UserProfile extends User {" in result["input"]["content"]
+
+    def test_heredoc_with_yaml_like_content(self):
+        """Test heredoc with YAML-like content."""
+        toon = """config: <<YAML
+server:
+  host: localhost
+  port: 8080
+database:
+  name: mydb
+  user: admin
+YAML"""
+        result = decode(toon)
+        assert "server:" in result["config"]
+        assert "host: localhost" in result["config"]
+        assert "database:" in result["config"]

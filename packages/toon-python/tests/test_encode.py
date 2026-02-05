@@ -288,3 +288,59 @@ class TestNormalization:
         dt = datetime(2024, 1, 15, 10, 30, 0)
         result = encode({"timestamp": dt})
         assert "2024-01-15T10:30:00" in result
+
+
+class TestHeredocEncoding:
+    """Test heredoc encoding for multi-line strings with key:value patterns."""
+
+    def test_heredoc_for_typescript_interface(self):
+        """Test that TypeScript interface uses heredoc encoding."""
+        content = """interface FileNode {
+  name: string
+  path: string
+}"""
+        result = encode({"content": content})
+        assert "<<CONTENT" in result
+        assert "CONTENT" in result.split("\n")[-1]
+        assert "name: string" in result
+
+    def test_heredoc_for_key_value_content(self):
+        """Test that content with key:value patterns uses heredoc."""
+        content = "name: Alice\nage: 30"
+        result = encode({"data": content})
+        assert "<<CONTENT" in result
+
+    def test_no_heredoc_for_simple_multiline(self):
+        """Test that simple multi-line without key:value uses regular escaping."""
+        content = "line 1\nline 2\nline 3"
+        result = encode({"text": content})
+        # Should use quoted string with escape sequences, not heredoc
+        assert "<<" not in result
+        assert "\\n" in result
+
+    def test_heredoc_round_trip(self):
+        """Test that heredoc encoded content can be decoded back."""
+        from toon import decode
+
+        content = """interface Props {
+  name: string
+  type: "file"
+}"""
+        encoded = encode({"content": content})
+        decoded = decode(encoded)
+        assert decoded["content"] == content
+
+    def test_heredoc_with_yaml_like_content(self):
+        """Test heredoc for YAML-like content."""
+        content = """server:
+  host: localhost
+  port: 8080"""
+        result = encode({"config": content})
+        assert "<<CONTENT" in result
+
+    def test_no_heredoc_for_single_line(self):
+        """Test that single-line strings don't use heredoc."""
+        content = "name: string"
+        result = encode({"data": content})
+        # Single line should use quotes, not heredoc
+        assert "<<" not in result

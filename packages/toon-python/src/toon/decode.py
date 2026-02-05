@@ -266,8 +266,11 @@ def _decode_key_value(
     key = _parse_key(key_part, cursor.mark_quoted)
 
     if value_part:
+        # Check for heredoc syntax: <<TAG
+        if value_part.startswith("<<"):
+            value = _decode_heredoc(cursor, value_part)
         # Check for YAML-style block scalar indicators
-        if value_part in ("|", ">", "|-", ">-", "|+", ">+"):
+        elif value_part in ("|", ">", "|-", ">-", "|+", ">+"):
             value = _decode_block_scalar(cursor, depth, value_part)
         else:
             # Inline value - but check for implicit multi-line continuation
@@ -400,6 +403,48 @@ def _collect_implicit_multiline(cursor: _Cursor, parent_depth: int) -> str | Non
         return None
 
     return "\n".join(lines)
+
+
+def _decode_heredoc(cursor: _Cursor, value_part: str) -> str:
+    """
+    Decode heredoc syntax: <<TAG ... TAG
+
+    The delimiter tag can be any identifier (e.g., <<CONTENT, <<END, <<EOF).
+    Content ends when we see the tag on its own line (stripped of whitespace).
+
+    This provides unambiguous multi-line string parsing that avoids the issue
+    where code content like "name: string" looks like TOON key-value pairs.
+
+    Args:
+        cursor: The line cursor (positioned after the heredoc opening line).
+        value_part: The value part containing <<TAG (e.g., "<<CONTENT").
+
+    Returns:
+        The collected multi-line content as a string.
+
+    Raises:
+        SyntaxError: If no tag is provided after <<.
+    """
+    # Extract tag from <<TAG
+    tag = value_part[2:].strip()
+    if not tag:
+        raise SyntaxError("Heredoc requires a tag: <<TAG")
+
+    lines: list[str] = []
+
+    while cursor.pos < len(cursor.lines):
+        line = cursor.lines[cursor.pos]
+        raw = line.raw.rstrip('\r\n')
+
+        # Check if this line is just the closing tag (stripped of whitespace)
+        if raw.strip() == tag:
+            cursor.pos += 1
+            break
+
+        cursor.pos += 1
+        lines.append(raw)
+
+    return '\n'.join(lines)
 
 
 def _decode_block_scalar(cursor: _Cursor, depth: int, indicator: str) -> str:
