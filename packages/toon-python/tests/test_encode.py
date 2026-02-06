@@ -290,36 +290,67 @@ class TestNormalization:
         assert "2024-01-15T10:30:00" in result
 
 
-class TestHeredocEncoding:
-    """Test heredoc encoding for multi-line strings with key:value patterns."""
+class TestMultilineEncoding:
+    """Test multi-line string encoding with various styles."""
 
-    def test_heredoc_for_typescript_interface(self):
-        """Test that TypeScript interface uses heredoc encoding."""
+    def test_block_scalar_for_typescript_interface(self):
+        """Test that TypeScript interface uses block scalar encoding by default."""
         content = """interface FileNode {
   name: string
   path: string
 }"""
         result = encode({"content": content})
+        # Default is block_scalar (|-)
+        assert "|-" in result
+        assert "name: string" in result
+        # Content should be indented
+        lines = result.split("\n")
+        assert lines[0] == "content: |-"
+        assert lines[1].startswith("  ")
+
+    def test_block_scalar_for_key_value_content(self):
+        """Test that content with key:value patterns uses block scalar by default."""
+        content = "name: Alice\nage: 30"
+        result = encode({"data": content})
+        assert "|-" in result
+        assert "<<" not in result
+
+    def test_heredoc_mode_for_typescript_interface(self):
+        """Test that heredoc mode still works when specified."""
+        content = """interface FileNode {
+  name: string
+  path: string
+}"""
+        result = encode({"content": content}, EncodeOptions(multiline_style="heredoc"))
         assert "<<CONTENT" in result
         assert "CONTENT" in result.split("\n")[-1]
         assert "name: string" in result
 
-    def test_heredoc_for_key_value_content(self):
-        """Test that content with key:value patterns uses heredoc."""
+    def test_heredoc_mode_for_key_value_content(self):
+        """Test heredoc mode with key:value patterns."""
         content = "name: Alice\nage: 30"
-        result = encode({"data": content})
+        result = encode({"data": content}, EncodeOptions(multiline_style="heredoc"))
         assert "<<CONTENT" in result
 
-    def test_no_heredoc_for_simple_multiline(self):
+    def test_escape_mode_for_multiline(self):
+        """Test escape mode uses quoted strings with escape sequences."""
+        content = "name: Alice\nage: 30"
+        result = encode({"data": content}, EncodeOptions(multiline_style="escape"))
+        assert "\\n" in result
+        assert "<<" not in result
+        assert "|-" not in result
+
+    def test_no_special_handling_for_simple_multiline(self):
         """Test that simple multi-line without key:value uses regular escaping."""
         content = "line 1\nline 2\nline 3"
         result = encode({"text": content})
-        # Should use quoted string with escape sequences, not heredoc
+        # Should use quoted string with escape sequences, not block scalar or heredoc
         assert "<<" not in result
+        assert "|-" not in result
         assert "\\n" in result
 
-    def test_heredoc_round_trip(self):
-        """Test that heredoc encoded content can be decoded back."""
+    def test_block_scalar_round_trip(self):
+        """Test that block scalar encoded content can be decoded back."""
         from toon import decode
 
         content = """interface Props {
@@ -330,17 +361,30 @@ class TestHeredocEncoding:
         decoded = decode(encoded)
         assert decoded["content"] == content
 
-    def test_heredoc_with_yaml_like_content(self):
-        """Test heredoc for YAML-like content."""
+    def test_heredoc_round_trip(self):
+        """Test that heredoc encoded content can be decoded back."""
+        from toon import decode
+
+        content = """interface Props {
+  name: string
+  type: "file"
+}"""
+        encoded = encode({"content": content}, EncodeOptions(multiline_style="heredoc"))
+        decoded = decode(encoded)
+        assert decoded["content"] == content
+
+    def test_block_scalar_with_yaml_like_content(self):
+        """Test block scalar for YAML-like content."""
         content = """server:
   host: localhost
   port: 8080"""
         result = encode({"config": content})
-        assert "<<CONTENT" in result
+        assert "|-" in result
 
-    def test_no_heredoc_for_single_line(self):
-        """Test that single-line strings don't use heredoc."""
+    def test_no_special_handling_for_single_line(self):
+        """Test that single-line strings don't use special encoding."""
         content = "name: string"
         result = encode({"data": content})
-        # Single line should use quotes, not heredoc
+        # Single line should use quotes, not block scalar or heredoc
         assert "<<" not in result
+        assert "|-" not in result

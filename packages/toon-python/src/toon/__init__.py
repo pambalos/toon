@@ -25,7 +25,7 @@ __version__ = "1.1.0"
 
 from .decode import decode, decode_lines, decode_stream_async
 from .encode import encode, encode_lines
-from .types import DecodeOptions, EncodeOptions, JsonValue
+from .types import DecodeOptions, EncodeOptions, JsonValue, MultilineStyle
 
 __all__ = [
     # Version
@@ -41,4 +41,5 @@ __all__ = [
     "DecodeOptions",
     # Types
     "JsonValue",
+    "MultilineStyle",
 ]

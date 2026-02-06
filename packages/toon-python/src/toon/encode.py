@@ -113,11 +113,23 @@ def _encode_object_lines(
         elif isinstance(normalized, list):
             yield from _encode_array(key, normalized, opts, depth)
         else:
-            # Primitive value - check if heredoc is needed for multi-line strings
-            if isinstance(normalized, str) and _needs_heredoc(normalized):
-                yield f"{indent}{encoded_key}: <<CONTENT"
-                yield from normalized.split('\n')
-                yield "CONTENT"
+            # Primitive value - check if special multi-line handling is needed
+            if isinstance(normalized, str) and _needs_multiline_special_handling(normalized):
+                if opts.multiline_style == "block_scalar":
+                    # YAML-style block scalar: key: |-\n  content
+                    content_indent = " " * (opts.indent * (depth + 1))
+                    yield f"{indent}{encoded_key}: |-"
+                    for line in normalized.split('\n'):
+                        yield f"{content_indent}{line}"
+                elif opts.multiline_style == "heredoc":
+                    # Heredoc style: key: <<TAG\ncontent\nTAG
+                    yield f"{indent}{encoded_key}: <<CONTENT"
+                    yield from normalized.split('\n')
+                    yield "CONTENT"
+                else:
+                    # Escape style: use quoted string with escape sequences
+                    encoded_value = encode_primitive(normalized, opts.delimiter)
+                    yield f"{indent}{encoded_key}: {encoded_value}"
             else:
                 encoded_value = encode_primitive(normalized, opts.delimiter)
                 yield f"{indent}{encoded_key}: {encoded_value}"
@@ -479,9 +491,9 @@ def _is_primitive(value: JsonValue) -> bool:
     return not isinstance(value, (dict, list))
 
 
-def _needs_heredoc(value: str) -> bool:
+def _needs_multiline_special_handling(value: str) -> bool:
     """
-    Check if a string value needs heredoc encoding.
+    Check if a string value needs special multi-line encoding.
 
     Returns True if the value:
     - Is multi-line AND
@@ -494,7 +506,7 @@ def _needs_heredoc(value: str) -> bool:
         value: The string value to check.
 
     Returns:
-        True if heredoc encoding should be used.
+        True if special multi-line encoding should be used.
     """
     if not isinstance(value, str):
         return False
@@ -519,22 +531,43 @@ def _needs_heredoc(value: str) -> bool:
     return False
 
 
-def _encode_heredoc(value: str, indent: str, tag: str = "CONTENT") -> list[str]:
+def _encode_block_scalar(
+    value: str, content_indent: str
+) -> Generator[str, None, None]:
+    """
+    Encode a string value using YAML-style block scalar (literal style).
+
+    Uses |- (literal with strip chomping) to preserve newlines exactly
+    without adding a trailing newline.
+
+    Args:
+        value: The string value to encode.
+        content_indent: The indentation for content lines (one level deeper than key).
+
+    Yields:
+        Lines for the block scalar (first line is just "|-").
+    """
+    # Use |- (literal, strip) - preserves newlines, no trailing newline
+    yield "|-"
+    for line in value.split('\n'):
+        # Preserve internal indentation by prepending content_indent
+        yield f"{content_indent}{line}"
+
+
+def _encode_heredoc(value: str, tag: str = "CONTENT") -> Generator[str, None, None]:
     """
     Encode a string value using heredoc syntax.
 
     Args:
         value: The string value to encode.
-        indent: The current indentation string.
         tag: The heredoc tag to use (default: CONTENT).
 
-    Returns:
-        List of lines for the heredoc.
+    Yields:
+        Lines for the heredoc.
     """
-    lines = [f"<<{tag}"]
-    lines.extend(value.split('\n'))
-    lines.append(tag)
-    return lines
+    yield f"<<{tag}"
+    yield from value.split('\n')
+    yield tag
 
 
 def _normalize_value(value: Any) -> JsonValue:

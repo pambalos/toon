@@ -13,6 +13,10 @@ JsonValue = JsonPrimitive | JsonArray | JsonObject
 Delimiter = Literal[",", "\t", "|"]
 
 
+# Multiline string encoding styles
+MultilineStyle = Literal["block_scalar", "heredoc", "escape"]
+
+
 @dataclass
 class EncodeOptions:
     """Options for TOON encoding."""
@@ -28,6 +32,27 @@ class EncodeOptions:
 
     flatten_depth: int | None = None
     """Maximum depth for key folding. None means unlimited."""
+
+    multiline_style: MultilineStyle = "block_scalar"
+    """How to encode multi-line strings that contain TOON-like patterns.
+
+    - "block_scalar": Use YAML-style block scalar (|-) with indented content.
+      Most readable and LLM-friendly. Example:
+        content: |-
+          def hello():
+              print("Hello")
+
+    - "heredoc": Use heredoc syntax (<<TAG...TAG).
+      Works but requires LLMs to remember special syntax. Example:
+        content: <<CONTENT
+        def hello():
+            print("Hello")
+        CONTENT
+
+    - "escape": Use escape sequences in quoted strings.
+      Most compact but least readable. Example:
+        content: "def hello():\n    print(\"Hello\")"
+    """
 
 
 @dataclass
